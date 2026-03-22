@@ -1,0 +1,97 @@
+const express = require("express");
+const axios = require("axios");
+require("dotenv").config();
+
+const app = express();
+app.use(express.static("public"));
+
+const {
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI,
+  BOT_TOKEN,
+  GUILD_ID,
+  ROLE_ID,
+  WEBHOOK_URL
+} = process.env;
+
+// 🔐 login
+app.get("/login", (req, res) => {
+  const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=identify%20guilds.join`;
+  res.redirect(url);
+});
+
+// 🔄 callback
+app.get("/callback", async (req, res) => {
+  const code = req.query.code;
+
+  try {
+    // ขอ token
+    const tokenRes = await axios.post("https://discord.com/api/oauth2/token",
+      new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    const { access_token } = tokenRes.data;
+
+    // ดึง user
+    const userRes = await axios.get("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+
+    const user = userRes.data;
+
+    // IP
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+    // 👉 เพิ่มเข้าเซิร์ฟ
+    await axios.put(
+      `https://discord.com/api/guilds/${GUILD_ID}/members/${user.id}`,
+      {
+        access_token: access_token
+      },
+      {
+        headers: {
+          Authorization: `Bot ${BOT_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    // 👉 แจก Role
+    await axios.put(
+      `https://discord.com/api/guilds/${GUILD_ID}/members/${user.id}/roles/${ROLE_ID}`,
+      {},
+      {
+        headers: {
+          Authorization: `Bot ${BOT_TOKEN}`
+        }
+      }
+    );
+
+    // 🔔 ส่งเข้า DEV
+    await axios.post(WEBHOOK_URL, {
+      content: `✅ VERIFY SUCCESS
+👤 ${user.username}#${user.discriminator}
+🆔 ${user.id}
+🌍 IP: ${ip}`
+    });
+
+    res.send(`
+    <h1>✅ ยืนยันสำเร็จ</h1>
+    <p>${user.username}</p>
+    `);
+
+  } catch (err) {
+    console.log(err.response?.data || err);
+    res.send("❌ Error");
+  }
+});
+
+app.listen(3000, () => console.log("🚀 Running on 3000"));
